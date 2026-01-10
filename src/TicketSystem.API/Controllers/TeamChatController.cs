@@ -276,13 +276,17 @@ public class TeamChatController : ControllerBase
         [FromQuery] DateTime? before = null)
     {
         var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        var isAdmin = User.IsInRole("Admin");
 
-        // Check if user is team member
-        var isMember = await _context.TeamMembers
-            .AnyAsync(m => m.TeamId == teamId && m.UserId == userId && m.IsActive);
+        // Check if user is team member or admin
+        if (!isAdmin)
+        {
+            var isMember = await _context.TeamMembers
+                .AnyAsync(m => m.TeamId == teamId && m.UserId == userId && m.IsActive);
 
-        if (!isMember)
-            return Forbid();
+            if (!isMember)
+                return Forbid();
+        }
 
         var query = _context.TeamMessages
             .Where(m => m.TeamId == teamId && !m.IsDeleted)
@@ -309,7 +313,7 @@ public class TeamChatController : ControllerBase
                 ReplyToMessageId = m.ReplyToMessageId,
                 CreatedAt = m.CreatedAt,
                 Reactions = m.Reactions.GroupBy(r => r.Emoji)
-                    .Select(g => new ReactionGroupDto { Emoji = g.Key, Count = g.Count() }).ToList(),
+                    .Select(g => new ReactionGroupDto { Emoji = g.Key, Count = g.Count(), UserIds = g.Select(r => r.UserId).ToList() }).ToList(),
                 AttachmentCount = m.Attachments.Count
             })
             .ToListAsync();
@@ -358,7 +362,7 @@ public class TeamChatController : ControllerBase
                 ReplyToMessageId = m.ReplyToMessageId,
                 CreatedAt = m.CreatedAt,
                 Reactions = m.Reactions.GroupBy(r => r.Emoji)
-                    .Select(g => new ReactionGroupDto { Emoji = g.Key, Count = g.Count() }).ToList(),
+                    .Select(g => new ReactionGroupDto { Emoji = g.Key, Count = g.Count(), UserIds = g.Select(r => r.UserId).ToList() }).ToList(),
                 AttachmentCount = m.Attachments.Count
             })
             .ToListAsync();
@@ -370,13 +374,17 @@ public class TeamChatController : ControllerBase
     public async Task<ActionResult<TeamMessageDto>> SendTeamMessage(int teamId, [FromBody] SendMessageRequest request)
     {
         var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value!;
+        var isAdmin = User.IsInRole("Admin");
 
-        // Check if user is team member
-        var isMember = await _context.TeamMembers
-            .AnyAsync(m => m.TeamId == teamId && m.UserId == userId && m.IsActive);
+        // Check if user is team member or admin
+        if (!isAdmin)
+        {
+            var isMember = await _context.TeamMembers
+                .AnyAsync(m => m.TeamId == teamId && m.UserId == userId && m.IsActive);
 
-        if (!isMember)
-            return Forbid();
+            if (!isMember)
+                return Forbid();
+        }
 
         var message = new TeamMessage
         {
@@ -499,6 +507,15 @@ public class TeamChatController : ControllerBase
         return NoContent();
     }
 
+    [HttpGet("messages/pinned")]
+    public async Task<ActionResult<List<TeamMessageDto>>> GetPinnedMessages(
+        [FromQuery] int? teamId = null,
+        [FromQuery] int? groupChatId = null)
+    {
+        // TODO: Implement pinning feature - for now return empty list
+        return Ok(new List<TeamMessageDto>());
+    }
+
     #endregion
 
     #region Reactions
@@ -605,6 +622,441 @@ public class TeamChatController : ControllerBase
     }
 
     #endregion
+
+    #region Scheduled Messages
+
+    [HttpPost("messages/schedule")]
+    public async Task<ActionResult<int>> ScheduleMessage([FromBody] ScheduleMessageRequest request)
+    {
+        var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value!;
+
+        var scheduled = new ScheduledMessage
+        {
+            UserId = userId,
+            Content = request.Content,
+            MessageType = request.MessageType,
+            ScheduledAt = request.ScheduledAt,
+            TeamId = request.TeamId,
+            GroupChatId = request.GroupChatId,
+            TargetUserId = request.TargetUserId,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        _context.ScheduledMessages.Add(scheduled);
+        await _context.SaveChangesAsync();
+
+        return Ok(scheduled.Id);
+    }
+
+    [HttpGet("messages/scheduled")]
+    public async Task<ActionResult<List<ScheduledMessageDto>>> GetScheduledMessages()
+    {
+        var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+
+        var messages = await _context.ScheduledMessages
+            .Where(m => m.UserId == userId && !m.IsSent && !m.IsCancelled)
+            .OrderBy(m => m.ScheduledAt)
+            .Select(m => new ScheduledMessageDto
+            {
+                Id = m.Id,
+                Content = m.Content,
+                ScheduledAt = m.ScheduledAt,
+                TeamId = m.TeamId,
+                GroupChatId = m.GroupChatId,
+                TargetUserId = m.TargetUserId,
+                CreatedAt = m.CreatedAt
+            })
+            .ToListAsync();
+
+        return Ok(messages);
+    }
+
+    [HttpPut("messages/scheduled/{id}")]
+    public async Task<IActionResult> UpdateScheduledMessage(int id, [FromBody] UpdateScheduledMessageRequest request)
+    {
+        var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+
+        var message = await _context.ScheduledMessages
+            .FirstOrDefaultAsync(m => m.Id == id && m.UserId == userId && !m.IsSent && !m.IsCancelled);
+
+        if (message is null)
+            return NotFound();
+
+        if (request.Content != null)
+            message.Content = request.Content;
+        if (request.ScheduledAt.HasValue)
+            message.ScheduledAt = request.ScheduledAt.Value;
+
+        message.UpdatedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync();
+
+        return NoContent();
+    }
+
+    [HttpDelete("messages/scheduled/{id}")]
+    public async Task<IActionResult> CancelScheduledMessage(int id)
+    {
+        var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+
+        var message = await _context.ScheduledMessages
+            .FirstOrDefaultAsync(m => m.Id == id && m.UserId == userId && !m.IsSent);
+
+        if (message is null)
+            return NotFound();
+
+        message.IsCancelled = true;
+        message.UpdatedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync();
+
+        return NoContent();
+    }
+
+    #endregion
+
+    #region Saved Messages
+
+    [HttpPost("messages/{messageId}/save")]
+    public async Task<ActionResult<int>> SaveMessage(int messageId, [FromBody] SaveMessageRequest request)
+    {
+        var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value!;
+
+        var message = await _context.TeamMessages.FindAsync(messageId);
+        if (message is null || message.IsDeleted)
+            return NotFound();
+
+        // Check if already saved
+        var existing = await _context.SavedMessages
+            .FirstOrDefaultAsync(s => s.UserId == userId && s.MessageId == messageId);
+
+        if (existing != null)
+            return BadRequest(new { Message = "Message already saved" });
+
+        var saved = new SavedMessage
+        {
+            UserId = userId,
+            MessageId = messageId,
+            ChatType = request.ChatType,
+            ChatId = request.ChatId,
+            ChatName = request.ChatName,
+            Note = request.Note,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        _context.SavedMessages.Add(saved);
+        await _context.SaveChangesAsync();
+
+        return Ok(saved.Id);
+    }
+
+    [HttpGet("messages/saved")]
+    public async Task<ActionResult<List<SavedMessageDto>>> GetSavedMessages()
+    {
+        var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+
+        var saved = await _context.SavedMessages
+            .Where(s => s.UserId == userId)
+            .Include(s => s.Message)
+                .ThenInclude(m => m.Sender)
+            .OrderByDescending(s => s.CreatedAt)
+            .Select(s => new SavedMessageDto
+            {
+                Id = s.Id,
+                MessageId = s.MessageId,
+                Content = s.Message.Content,
+                SenderName = s.Message.Sender.FullName,
+                ChatType = s.ChatType,
+                ChatId = s.ChatId,
+                ChatName = s.ChatName,
+                Note = s.Note,
+                SavedAt = s.CreatedAt,
+                MessageCreatedAt = s.Message.CreatedAt
+            })
+            .ToListAsync();
+
+        return Ok(saved);
+    }
+
+    [HttpDelete("messages/saved/{id}")]
+    public async Task<IActionResult> UnsaveMessage(int id)
+    {
+        var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+
+        var saved = await _context.SavedMessages
+            .FirstOrDefaultAsync(s => s.Id == id && s.UserId == userId);
+
+        if (saved is null)
+            return NotFound();
+
+        _context.SavedMessages.Remove(saved);
+        await _context.SaveChangesAsync();
+
+        return NoContent();
+    }
+
+    #endregion
+
+    #region Reminders
+
+    [HttpPost("reminders")]
+    public async Task<ActionResult<int>> CreateReminder([FromBody] CreateReminderRequest request)
+    {
+        var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value!;
+
+        var message = await _context.TeamMessages.FindAsync(request.MessageId);
+        if (message is null || message.IsDeleted)
+            return NotFound(new { Message = "Message not found" });
+
+        var reminder = new MessageReminder
+        {
+            UserId = userId,
+            MessageId = request.MessageId,
+            ChatType = request.ChatType,
+            ChatId = request.ChatId,
+            ChatName = request.ChatName,
+            RemindAt = request.RemindAt,
+            Note = request.Note,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        _context.MessageReminders.Add(reminder);
+        await _context.SaveChangesAsync();
+
+        return Ok(reminder.Id);
+    }
+
+    [HttpGet("reminders")]
+    public async Task<ActionResult<List<MessageReminderDto>>> GetReminders()
+    {
+        var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+
+        var reminders = await _context.MessageReminders
+            .Where(r => r.UserId == userId && !r.IsCancelled && !r.IsTriggered)
+            .Include(r => r.Message)
+                .ThenInclude(m => m.Sender)
+            .OrderBy(r => r.RemindAt)
+            .Select(r => new MessageReminderDto
+            {
+                Id = r.Id,
+                MessageId = r.MessageId,
+                Content = r.Message.Content,
+                SenderName = r.Message.Sender.FullName,
+                ChatType = r.ChatType,
+                ChatId = r.ChatId,
+                ChatName = r.ChatName,
+                RemindAt = r.RemindAt,
+                Note = r.Note,
+                CreatedAt = r.CreatedAt
+            })
+            .ToListAsync();
+
+        return Ok(reminders);
+    }
+
+    [HttpPut("reminders/{id}")]
+    public async Task<IActionResult> UpdateReminder(int id, [FromBody] UpdateReminderRequest request)
+    {
+        var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+
+        var reminder = await _context.MessageReminders
+            .FirstOrDefaultAsync(r => r.Id == id && r.UserId == userId && !r.IsCancelled && !r.IsTriggered);
+
+        if (reminder is null)
+            return NotFound();
+
+        reminder.RemindAt = request.RemindAt;
+        reminder.UpdatedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync();
+
+        return NoContent();
+    }
+
+    [HttpDelete("reminders/{id}")]
+    public async Task<IActionResult> CancelReminder(int id)
+    {
+        var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+
+        var reminder = await _context.MessageReminders
+            .FirstOrDefaultAsync(r => r.Id == id && r.UserId == userId && !r.IsTriggered);
+
+        if (reminder is null)
+            return NotFound();
+
+        reminder.IsCancelled = true;
+        reminder.UpdatedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync();
+
+        return NoContent();
+    }
+
+    #endregion
+
+    #region Polls
+
+    [HttpPost("polls")]
+    public async Task<ActionResult<int>> CreatePoll([FromBody] CreatePollRequest request)
+    {
+        var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value!;
+
+        var poll = new Poll
+        {
+            Question = request.Question,
+            TeamId = request.TeamId,
+            GroupChatId = request.GroupChatId,
+            IsAnonymous = request.IsAnonymous,
+            AllowMultipleVotes = request.AllowMultipleVotes,
+            ExpiresAt = request.ExpiresAt,
+            CreatedById = userId,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        _context.Polls.Add(poll);
+        await _context.SaveChangesAsync();
+
+        // Add options
+        foreach (var optionText in request.Options)
+        {
+            _context.PollOptions.Add(new PollOption
+            {
+                PollId = poll.Id,
+                Text = optionText
+            });
+        }
+
+        await _context.SaveChangesAsync();
+
+        return Ok(poll.Id);
+    }
+
+    [HttpGet("polls/{id}")]
+    public async Task<ActionResult<PollDto>> GetPoll(int id)
+    {
+        var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+
+        var poll = await _context.Polls
+            .Include(p => p.Options)
+                .ThenInclude(o => o.Votes)
+            .Include(p => p.CreatedByUser)
+            .FirstOrDefaultAsync(p => p.Id == id);
+
+        if (poll is null)
+            return NotFound();
+
+        var totalVotes = poll.Options.Sum(o => o.Votes.Count);
+        var userVotes = poll.Options
+            .SelectMany(o => o.Votes)
+            .Where(v => v.UserId == userId)
+            .Select(v => v.PollOptionId)
+            .ToList();
+
+        return Ok(new PollDto
+        {
+            Id = poll.Id,
+            Question = poll.Question,
+            IsAnonymous = poll.IsAnonymous,
+            AllowMultipleVotes = poll.AllowMultipleVotes,
+            ExpiresAt = poll.ExpiresAt,
+            IsClosed = poll.IsClosed,
+            CreatedByName = poll.CreatedByUser.FullName,
+            CreatedAt = poll.CreatedAt,
+            TotalVotes = totalVotes,
+            UserVotedOptionIds = userVotes,
+            Options = poll.Options.Select(o => new PollOptionDto
+            {
+                Id = o.Id,
+                Text = o.Text,
+                VoteCount = o.Votes.Count,
+                Percentage = totalVotes > 0 ? (int)Math.Round(o.Votes.Count * 100.0 / totalVotes) : 0
+            }).ToList()
+        });
+    }
+
+    [HttpPost("polls/{id}/vote")]
+    public async Task<IActionResult> Vote(int id, [FromBody] VoteRequest request)
+    {
+        var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value!;
+
+        var poll = await _context.Polls
+            .Include(p => p.Options)
+                .ThenInclude(o => o.Votes)
+            .FirstOrDefaultAsync(p => p.Id == id);
+
+        if (poll is null)
+            return NotFound();
+
+        if (poll.IsClosed || (poll.ExpiresAt.HasValue && poll.ExpiresAt < DateTime.UtcNow))
+            return BadRequest(new { Message = "Poll is closed" });
+
+        // Remove existing votes if not allowing multiple
+        if (!poll.AllowMultipleVotes)
+        {
+            var existingVotes = poll.Options
+                .SelectMany(o => o.Votes)
+                .Where(v => v.UserId == userId)
+                .ToList();
+
+            foreach (var vote in existingVotes)
+            {
+                _context.PollVotes.Remove(vote);
+            }
+        }
+
+        // Add new votes
+        foreach (var optionId in request.OptionIds)
+        {
+            var option = poll.Options.FirstOrDefault(o => o.Id == optionId);
+            if (option == null) continue;
+
+            var existingVote = option.Votes.FirstOrDefault(v => v.UserId == userId);
+            if (existingVote == null)
+            {
+                _context.PollVotes.Add(new PollVote
+                {
+                    PollOptionId = optionId,
+                    UserId = userId,
+                    VotedAt = DateTime.UtcNow
+                });
+            }
+        }
+
+        await _context.SaveChangesAsync();
+
+        return NoContent();
+    }
+
+    [HttpPost("polls/{id}/close")]
+    public async Task<IActionResult> ClosePoll(int id)
+    {
+        var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+
+        var poll = await _context.Polls.FirstOrDefaultAsync(p => p.Id == id && p.CreatedById == userId);
+
+        if (poll is null)
+            return NotFound();
+
+        poll.IsClosed = true;
+        poll.ClosedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync();
+
+        return NoContent();
+    }
+
+    [HttpDelete("polls/{id}")]
+    public async Task<IActionResult> DeletePoll(int id)
+    {
+        var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+
+        var poll = await _context.Polls.FirstOrDefaultAsync(p => p.Id == id && p.CreatedById == userId);
+
+        if (poll is null)
+            return NotFound();
+
+        _context.Polls.Remove(poll);
+        await _context.SaveChangesAsync();
+
+        return NoContent();
+    }
+
+    #endregion
 }
 
 // DTOs
@@ -656,6 +1108,7 @@ public class ReactionGroupDto
 {
     public string Emoji { get; set; } = string.Empty;
     public int Count { get; set; }
+    public List<string> UserIds { get; set; } = new();
 }
 
 public record CreateGroupChatRequest(
@@ -679,3 +1132,108 @@ public record SendMessageRequest(
 public record EditMessageRequest(string Content);
 
 public record AddReactionRequest(string Emoji);
+
+// Scheduled Messages DTOs
+public record ScheduleMessageRequest(
+    string Content,
+    MessageType MessageType,
+    DateTime ScheduledAt,
+    int? TeamId = null,
+    int? GroupChatId = null,
+    string? TargetUserId = null);
+
+public record UpdateScheduledMessageRequest(
+    string? Content = null,
+    DateTime? ScheduledAt = null);
+
+public class ScheduledMessageDto
+{
+    public int Id { get; set; }
+    public string Content { get; set; } = string.Empty;
+    public DateTime ScheduledAt { get; set; }
+    public int? TeamId { get; set; }
+    public int? GroupChatId { get; set; }
+    public string? TargetUserId { get; set; }
+    public DateTime CreatedAt { get; set; }
+}
+
+// Saved Messages DTOs
+public record SaveMessageRequest(
+    string ChatType,
+    string ChatId,
+    string ChatName,
+    string? Note = null);
+
+public class SavedMessageDto
+{
+    public int Id { get; set; }
+    public int MessageId { get; set; }
+    public string Content { get; set; } = string.Empty;
+    public string SenderName { get; set; } = string.Empty;
+    public string ChatType { get; set; } = string.Empty;
+    public string ChatId { get; set; } = string.Empty;
+    public string ChatName { get; set; } = string.Empty;
+    public string? Note { get; set; }
+    public DateTime SavedAt { get; set; }
+    public DateTime MessageCreatedAt { get; set; }
+}
+
+// Reminder DTOs
+public record CreateReminderRequest(
+    int MessageId,
+    string ChatType,
+    string ChatId,
+    string ChatName,
+    DateTime RemindAt,
+    string? Note = null);
+
+public record UpdateReminderRequest(DateTime RemindAt);
+
+public class MessageReminderDto
+{
+    public int Id { get; set; }
+    public int MessageId { get; set; }
+    public string Content { get; set; } = string.Empty;
+    public string SenderName { get; set; } = string.Empty;
+    public string ChatType { get; set; } = string.Empty;
+    public string ChatId { get; set; } = string.Empty;
+    public string ChatName { get; set; } = string.Empty;
+    public DateTime RemindAt { get; set; }
+    public string? Note { get; set; }
+    public DateTime CreatedAt { get; set; }
+}
+
+// Poll DTOs
+public record CreatePollRequest(
+    string Question,
+    List<string> Options,
+    int? TeamId = null,
+    int? GroupChatId = null,
+    bool IsAnonymous = false,
+    bool AllowMultipleVotes = false,
+    DateTime? ExpiresAt = null);
+
+public record VoteRequest(List<int> OptionIds);
+
+public class PollDto
+{
+    public int Id { get; set; }
+    public string Question { get; set; } = string.Empty;
+    public bool IsAnonymous { get; set; }
+    public bool AllowMultipleVotes { get; set; }
+    public DateTime? ExpiresAt { get; set; }
+    public bool IsClosed { get; set; }
+    public string CreatedByName { get; set; } = string.Empty;
+    public DateTime CreatedAt { get; set; }
+    public int TotalVotes { get; set; }
+    public List<int> UserVotedOptionIds { get; set; } = new();
+    public List<PollOptionDto> Options { get; set; } = new();
+}
+
+public class PollOptionDto
+{
+    public int Id { get; set; }
+    public string Text { get; set; } = string.Empty;
+    public int VoteCount { get; set; }
+    public int Percentage { get; set; }
+}

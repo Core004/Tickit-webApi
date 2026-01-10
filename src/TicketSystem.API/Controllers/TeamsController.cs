@@ -68,6 +68,13 @@ public class TeamsController : ControllerBase
         if (team is null)
             return NotFound();
 
+        // Get employee info for team members
+        var activeMembers = team.Members.Where(m => m.IsActive).ToList();
+        var userIds = activeMembers.Select(m => m.UserId).ToList();
+        var employees = await _context.Employees
+            .Where(e => e.UserId != null && userIds.Contains(e.UserId))
+            .ToDictionaryAsync(e => e.UserId!, e => e);
+
         return Ok(new TeamDetailDto
         {
             Id = team.Id,
@@ -78,12 +85,23 @@ public class TeamsController : ControllerBase
             IsActive = team.IsActive,
             CreatedAt = team.CreatedAt,
             UpdatedAt = team.UpdatedAt,
-            Members = team.Members.Select(m => new TeamMemberDto
+            Members = activeMembers.Select(m =>
             {
-                UserId = m.UserId,
-                UserName = m.User.FullName,
-                Email = m.User.Email!,
-                IsLead = m.IsLead
+                var employee = employees.GetValueOrDefault(m.UserId);
+                return new TeamMemberDto
+                {
+                    Id = m.Id,
+                    TeamId = m.TeamId,
+                    UserId = m.UserId,
+                    UserName = m.User?.FullName,
+                    UserEmail = m.User?.Email,
+                    MemberRole = m.IsLead ? "Lead" : "Agent",
+                    JoinedAt = m.JoinedAt,
+                    IsActive = m.IsActive,
+                    EmployeeId = employee?.Id,
+                    EmployeeName = employee?.Name,
+                    EmployeeCode = employee?.EmployeeCode
+                };
             }).ToList()
         });
     }
@@ -130,19 +148,35 @@ public class TeamsController : ControllerBase
     {
         var members = await _context.TeamMembers
             .Include(m => m.User)
-            .Where(m => m.TeamId == id)
-            .Select(m => new TeamMemberDto
-            {
-                Id = m.Id,
-                UserId = m.UserId,
-                UserName = m.User != null ? m.User.FullName : null,
-                Email = m.User != null ? m.User.Email : null,
-                IsLead = m.IsLead,
-                JoinedAt = m.JoinedAt
-            })
+            .Where(m => m.TeamId == id && m.IsActive)
             .ToListAsync();
 
-        return Ok(members);
+        // Get employee info for each member
+        var userIds = members.Select(m => m.UserId).ToList();
+        var employees = await _context.Employees
+            .Where(e => e.UserId != null && userIds.Contains(e.UserId))
+            .ToDictionaryAsync(e => e.UserId!, e => e);
+
+        var result = members.Select(m =>
+        {
+            var employee = employees.GetValueOrDefault(m.UserId);
+            return new TeamMemberDto
+            {
+                Id = m.Id,
+                TeamId = m.TeamId,
+                UserId = m.UserId,
+                UserName = m.User?.FullName,
+                UserEmail = m.User?.Email,
+                MemberRole = m.IsLead ? "Lead" : "Agent",
+                JoinedAt = m.JoinedAt,
+                IsActive = m.IsActive,
+                EmployeeId = employee?.Id,
+                EmployeeName = employee?.Name,
+                EmployeeCode = employee?.EmployeeCode
+            };
+        }).ToList();
+
+        return Ok(result);
     }
 
     [HttpPost("{id}/members")]
@@ -156,13 +190,25 @@ public class TeamsController : ControllerBase
             .FirstOrDefaultAsync(m => m.TeamId == id && m.UserId == request.UserId);
 
         if (existingMember != null)
+        {
+            // Reactivate if previously removed
+            if (!existingMember.IsActive)
+            {
+                existingMember.IsActive = true;
+                existingMember.IsLead = request.MemberRole.Equals("Lead", StringComparison.OrdinalIgnoreCase);
+                existingMember.JoinedAt = DateTime.UtcNow;
+                await _context.SaveChangesAsync();
+                return Ok(existingMember.Id);
+            }
             return BadRequest(new { Message = "User is already a member of this team" });
+        }
 
         var member = new TeamMember
         {
             TeamId = id,
             UserId = request.UserId,
-            IsLead = request.IsLead,
+            IsLead = request.MemberRole.Equals("Lead", StringComparison.OrdinalIgnoreCase),
+            IsActive = true,
             JoinedAt = DateTime.UtcNow
         };
 
@@ -176,12 +222,13 @@ public class TeamsController : ControllerBase
     public async Task<IActionResult> RemoveMember(int id, string userId)
     {
         var member = await _context.TeamMembers
-            .FirstOrDefaultAsync(m => m.TeamId == id && m.UserId == userId);
+            .FirstOrDefaultAsync(m => m.TeamId == id && m.UserId == userId && m.IsActive);
 
         if (member is null)
             return NotFound();
 
-        _context.TeamMembers.Remove(member);
+        // Soft delete
+        member.IsActive = false;
         await _context.SaveChangesAsync();
 
         return NoContent();
@@ -222,13 +269,20 @@ public class TeamDetailDto : TeamDto
 public class TeamMemberDto
 {
     public int Id { get; set; }
+    public int TeamId { get; set; }
     public string UserId { get; set; } = string.Empty;
     public string? UserName { get; set; }
-    public string? Email { get; set; }
-    public bool IsLead { get; set; }
+    public string? UserEmail { get; set; }
+    public string MemberRole { get; set; } = "Agent";
     public DateTime JoinedAt { get; set; }
+    public bool IsActive { get; set; } = true;
+
+    // Employee details
+    public int? EmployeeId { get; set; }
+    public string? EmployeeName { get; set; }
+    public string? EmployeeCode { get; set; }
 }
 
 public record CreateTeamRequest(string Name, string? Description, int? DepartmentId);
 public record UpdateTeamRequest(string Name, string? Description, int? DepartmentId);
-public record AddTeamMemberRequest(string UserId, bool IsLead = false);
+public record AddTeamMemberRequest(string UserId, string MemberRole = "Agent");

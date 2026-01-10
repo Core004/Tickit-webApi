@@ -22,8 +22,11 @@ public interface IApplicationDbContext
     DbSet<Company> Companies { get; }
     DbSet<Department> Departments { get; }
     DbSet<DepartmentMember> DepartmentMembers { get; }
+    DbSet<DepartmentCompany> DepartmentCompanies { get; }
     DbSet<Team> Teams { get; }
     DbSet<TeamMember> TeamMembers { get; }
+    DbSet<Employee> Employees { get; }
+    DbSet<EmployeeReportingPerson> EmployeeReportingPersons { get; }
 
     // Products
     DbSet<Product> Products { get; }
@@ -68,6 +71,15 @@ public interface IApplicationDbContext
     DbSet<TeamMessageEditHistory> TeamMessageEditHistories { get; }
     DbSet<GroupChat> GroupChats { get; }
     DbSet<GroupChatMember> GroupChatMembers { get; }
+    DbSet<ScheduledMessage> ScheduledMessages { get; }
+    DbSet<SavedMessage> SavedMessages { get; }
+    DbSet<MessageReminder> MessageReminders { get; }
+    DbSet<Poll> Polls { get; }
+    DbSet<PollOption> PollOptions { get; }
+    DbSet<PollVote> PollVotes { get; }
+
+    // Avatars
+    DbSet<Avatar> Avatars { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

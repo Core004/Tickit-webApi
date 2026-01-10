@@ -133,6 +133,7 @@ try
             await TicketSystem.Infrastructure.Persistence.Seeding.StatusSeeder.SeedPrioritiesAsync(context);
             await TicketSystem.Infrastructure.Persistence.Seeding.StatusSeeder.SeedCategoriesAsync(context);
             await TicketSystem.Infrastructure.Persistence.Seeding.PermissionSeeder.SeedPermissionsAsync(context);
+            await TicketSystem.Infrastructure.Persistence.Seeding.AvatarSeeder.SeedAvatarsAsync(context);
 
             Log.Information("Database seeded successfully");
         }

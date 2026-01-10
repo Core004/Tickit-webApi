@@ -54,6 +54,7 @@ public class UsersController : ControllerBase
 
         var totalCount = await query.CountAsync();
         var items = await query
+            .Include(u => u.Company)
             .Skip((pageNumber - 1) * pageSize)
             .Take(pageSize)
             .Select(u => new UserListDto
@@ -63,6 +64,10 @@ public class UsersController : ControllerBase
                 FirstName = u.FirstName,
                 LastName = u.LastName,
                 IsActive = u.IsActive,
+                CompanyId = u.CompanyId,
+                CompanyName = u.Company != null ? u.Company.Name : null,
+                DepartmentId = u.DepartmentId,
+                DepartmentName = _context.Departments.Where(d => d.Id == u.DepartmentId).Select(d => d.Name).FirstOrDefault(),
                 CreatedAt = u.CreatedAt,
                 LastLoginAt = u.LastLoginAt
             })
@@ -90,6 +95,9 @@ public class UsersController : ControllerBase
             return NotFound();
 
         var roles = await _userManager.GetRolesAsync(user);
+        var departmentName = user.DepartmentId.HasValue
+            ? await _context.Departments.Where(d => d.Id == user.DepartmentId).Select(d => d.Name).FirstOrDefaultAsync()
+            : null;
 
         return Ok(new UserDetailDto
         {
@@ -102,6 +110,8 @@ public class UsersController : ControllerBase
             IsActive = user.IsActive,
             CompanyId = user.CompanyId,
             CompanyName = user.Company?.Name,
+            DepartmentId = user.DepartmentId,
+            DepartmentName = departmentName,
             Roles = roles.ToList(),
             CreatedAt = user.CreatedAt,
             UpdatedAt = user.UpdatedAt,
@@ -124,6 +134,8 @@ public class UsersController : ControllerBase
             LastName = request.LastName,
             PhoneNumber = request.PhoneNumber,
             CompanyId = request.CompanyId,
+            DepartmentId = request.DepartmentId,
+            ProfilePicture = request.ProfilePicture,
             IsActive = true,
             EmailConfirmed = true,
             CreatedAt = DateTime.UtcNow
@@ -162,6 +174,8 @@ public class UsersController : ControllerBase
         user.LastName = request.LastName;
         user.PhoneNumber = request.PhoneNumber;
         user.CompanyId = request.CompanyId;
+        user.DepartmentId = request.DepartmentId;
+        user.ProfilePicture = request.ProfilePicture;
         user.UpdatedAt = DateTime.UtcNow;
 
         var result = await _userManager.UpdateAsync(user);
@@ -207,6 +221,31 @@ public class UsersController : ControllerBase
         user.IsActive = false;
         user.UpdatedAt = DateTime.UtcNow;
         await _userManager.UpdateAsync(user);
+
+        return NoContent();
+    }
+
+    [HttpDelete("{id}")]
+    public async Task<IActionResult> DeleteUser(string id)
+    {
+        var user = await _userManager.FindByIdAsync(id);
+        if (user is null)
+            return NotFound();
+
+        // Remove user permissions first
+        var userPermissions = await _context.UserPermissions
+            .Where(up => up.UserId == id)
+            .ToListAsync();
+        foreach (var up in userPermissions)
+            _context.UserPermissions.Remove(up);
+        await _context.SaveChangesAsync();
+
+        // Delete the user
+        var result = await _userManager.DeleteAsync(user);
+        if (!result.Succeeded)
+            return BadRequest(new { Errors = result.Errors.Select(e => e.Description) });
+
+        _logger.LogInformation("User {Email} deleted permanently", user.Email);
 
         return NoContent();
     }
@@ -351,6 +390,10 @@ public class UserListDto
     public string FirstName { get; set; } = string.Empty;
     public string LastName { get; set; } = string.Empty;
     public bool IsActive { get; set; }
+    public int? CompanyId { get; set; }
+    public string? CompanyName { get; set; }
+    public int? DepartmentId { get; set; }
+    public string? DepartmentName { get; set; }
     public List<string> Roles { get; set; } = new();
     public DateTime CreatedAt { get; set; }
     public DateTime? LastLoginAt { get; set; }
@@ -362,6 +405,8 @@ public class UserDetailDto : UserListDto
     public string? ProfilePicture { get; set; }
     public int? CompanyId { get; set; }
     public string? CompanyName { get; set; }
+    public int? DepartmentId { get; set; }
+    public string? DepartmentName { get; set; }
     public DateTime? UpdatedAt { get; set; }
 }
 
@@ -372,14 +417,18 @@ public record CreateUserRequest(
     string LastName,
     string? PhoneNumber,
     int? CompanyId,
-    List<string>? Roles);
+    int? DepartmentId,
+    List<string>? Roles,
+    string? ProfilePicture);
 
 public record UpdateUserRequest(
     string FirstName,
     string LastName,
     string? PhoneNumber,
     int? CompanyId,
-    List<string>? Roles);
+    int? DepartmentId,
+    List<string>? Roles,
+    string? ProfilePicture);
 
 public record ResetPasswordRequest(string NewPassword);
 
