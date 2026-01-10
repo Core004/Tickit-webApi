@@ -14,6 +14,7 @@ public class ApplicationUser : IdentityUser
 
     // Foreign keys
     public int? CompanyId { get; set; }
+    public int? DepartmentId { get; set; }
 
     // Navigation properties
     public Company? Company { get; set; }

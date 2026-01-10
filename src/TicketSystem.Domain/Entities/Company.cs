@@ -24,7 +24,7 @@ public class Company : AuditableEntity
     // Navigation properties
     public ICollection<ApplicationUser> Users { get; set; } = new List<ApplicationUser>();
     public ICollection<Ticket> Tickets { get; set; } = new List<Ticket>();
-    public ICollection<Department> Departments { get; set; } = new List<Department>();
+    public ICollection<DepartmentCompany> DepartmentCompanies { get; set; } = new List<DepartmentCompany>();
     public ICollection<CompanyProduct> CompanyProducts { get; set; } = new List<CompanyProduct>();
     public ICollection<CompanyPriority> CompanyPriorities { get; set; } = new List<CompanyPriority>();
 }

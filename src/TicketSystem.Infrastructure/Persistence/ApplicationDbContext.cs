@@ -25,8 +25,11 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser>, IApplica
     public DbSet<Company> Companies => Set<Company>();
     public DbSet<Department> Departments => Set<Department>();
     public DbSet<DepartmentMember> DepartmentMembers => Set<DepartmentMember>();
+    public DbSet<DepartmentCompany> DepartmentCompanies => Set<DepartmentCompany>();
     public DbSet<Team> Teams => Set<Team>();
     public DbSet<TeamMember> TeamMembers => Set<TeamMember>();
+    public DbSet<Employee> Employees => Set<Employee>();
+    public DbSet<EmployeeReportingPerson> EmployeeReportingPersons => Set<EmployeeReportingPerson>();
     public DbSet<Product> Products => Set<Product>();
     public DbSet<ProductPlan> ProductPlans => Set<ProductPlan>();
     public DbSet<ProductVersion> ProductVersions => Set<ProductVersion>();
@@ -68,6 +71,15 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser>, IApplica
     public DbSet<TeamMessageEditHistory> TeamMessageEditHistories => Set<TeamMessageEditHistory>();
     public DbSet<GroupChat> GroupChats => Set<GroupChat>();
     public DbSet<GroupChatMember> GroupChatMembers => Set<GroupChatMember>();
+    public DbSet<ScheduledMessage> ScheduledMessages => Set<ScheduledMessage>();
+    public DbSet<SavedMessage> SavedMessages => Set<SavedMessage>();
+    public DbSet<MessageReminder> MessageReminders => Set<MessageReminder>();
+    public DbSet<Poll> Polls => Set<Poll>();
+    public DbSet<PollOption> PollOptions => Set<PollOption>();
+    public DbSet<PollVote> PollVotes => Set<PollVote>();
+
+    // Avatars
+    public DbSet<Avatar> Avatars => Set<Avatar>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -194,5 +206,123 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser>, IApplica
             .WithMany(m => m.EditHistory)
             .HasForeignKey(h => h.MessageId)
             .OnDelete(DeleteBehavior.Cascade);
+
+        // Employee reporting person self-referencing configuration
+        builder.Entity<EmployeeReportingPerson>()
+            .HasOne(erp => erp.Employee)
+            .WithMany(e => e.ReportingPersons)
+            .HasForeignKey(erp => erp.EmployeeId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.Entity<EmployeeReportingPerson>()
+            .HasOne(erp => erp.ReportingPerson)
+            .WithMany(e => e.Subordinates)
+            .HasForeignKey(erp => erp.ReportingPersonId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.Entity<Employee>()
+            .HasIndex(e => e.EmployeeCode)
+            .IsUnique();
+
+        builder.Entity<Employee>()
+            .HasIndex(e => e.Email);
+
+        // DepartmentCompany many-to-many configuration
+        builder.Entity<DepartmentCompany>()
+            .HasKey(dc => new { dc.DepartmentId, dc.CompanyId });
+
+        builder.Entity<DepartmentCompany>()
+            .HasOne(dc => dc.Department)
+            .WithMany(d => d.DepartmentCompanies)
+            .HasForeignKey(dc => dc.DepartmentId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        builder.Entity<DepartmentCompany>()
+            .HasOne(dc => dc.Company)
+            .WithMany(c => c.DepartmentCompanies)
+            .HasForeignKey(dc => dc.CompanyId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        // Scheduled Messages
+        builder.Entity<ScheduledMessage>()
+            .HasOne(m => m.User)
+            .WithMany()
+            .HasForeignKey(m => m.UserId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.Entity<ScheduledMessage>()
+            .HasOne(m => m.Team)
+            .WithMany()
+            .HasForeignKey(m => m.TeamId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.Entity<ScheduledMessage>()
+            .HasOne(m => m.GroupChat)
+            .WithMany()
+            .HasForeignKey(m => m.GroupChatId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // Saved Messages
+        builder.Entity<SavedMessage>()
+            .HasOne(m => m.User)
+            .WithMany()
+            .HasForeignKey(m => m.UserId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.Entity<SavedMessage>()
+            .HasOne(m => m.Message)
+            .WithMany()
+            .HasForeignKey(m => m.MessageId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        // Message Reminders
+        builder.Entity<MessageReminder>()
+            .HasOne(m => m.User)
+            .WithMany()
+            .HasForeignKey(m => m.UserId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.Entity<MessageReminder>()
+            .HasOne(m => m.Message)
+            .WithMany()
+            .HasForeignKey(m => m.MessageId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        // Polls
+        builder.Entity<Poll>()
+            .HasOne(p => p.Team)
+            .WithMany()
+            .HasForeignKey(p => p.TeamId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.Entity<Poll>()
+            .HasOne(p => p.GroupChat)
+            .WithMany()
+            .HasForeignKey(p => p.GroupChatId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.Entity<Poll>()
+            .HasOne(p => p.CreatedByUser)
+            .WithMany()
+            .HasForeignKey(p => p.CreatedById)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.Entity<PollOption>()
+            .HasOne(o => o.Poll)
+            .WithMany(p => p.Options)
+            .HasForeignKey(o => o.PollId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        builder.Entity<PollVote>()
+            .HasOne(v => v.PollOption)
+            .WithMany(o => o.Votes)
+            .HasForeignKey(v => v.PollOptionId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        builder.Entity<PollVote>()
+            .HasOne(v => v.User)
+            .WithMany()
+            .HasForeignKey(v => v.UserId)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }

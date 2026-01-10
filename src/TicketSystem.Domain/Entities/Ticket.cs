@@ -16,6 +16,7 @@ public class Ticket : AuditableEntity
     public int? StatusId { get; set; }
     public int? PriorityId { get; set; }
     public int? CompanyId { get; set; }
+    public int? ProductId { get; set; }
     public int? DepartmentId { get; set; }
     public int? TeamId { get; set; }
     public string? AssignedToId { get; set; }
@@ -40,6 +41,7 @@ public class Ticket : AuditableEntity
     public TicketStatusEntity? Status { get; set; }
     public Priority? PriorityEntity { get; set; }
     public Company? Company { get; set; }
+    public Product? Product { get; set; }
     public Department? Department { get; set; }
     public Team? Team { get; set; }
     public ApplicationUser? AssignedTo { get; set; }

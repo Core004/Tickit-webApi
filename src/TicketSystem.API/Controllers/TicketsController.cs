@@ -96,6 +96,7 @@ public class TicketsController : ControllerBase
             .Include(t => t.AssignedTo)
             .Include(t => t.CreatedBy)
             .Include(t => t.Company)
+            .Include(t => t.Product)
             .Include(t => t.Department)
             .Include(t => t.Team)
             .Include(t => t.Comments.OrderByDescending(c => c.CreatedAt))
@@ -123,6 +124,8 @@ public class TicketsController : ControllerBase
             CreatedBy = ticket.CreatedBy?.FullName,
             CompanyId = ticket.CompanyId,
             Company = ticket.Company?.Name,
+            ProductId = ticket.ProductId,
+            Product = ticket.Product?.Name,
             DepartmentId = ticket.DepartmentId,
             Department = ticket.Department?.Name,
             TeamId = ticket.TeamId,
@@ -159,6 +162,7 @@ public class TicketsController : ControllerBase
             CategoryId = request.CategoryId,
             StatusId = request.StatusId ?? 1, // Default to first status
             CompanyId = request.CompanyId,
+            ProductId = request.ProductId,
             DepartmentId = request.DepartmentId,
             CreatedById = _currentUser.UserId!,
             CreatedAt = DateTime.UtcNow
@@ -481,6 +485,8 @@ public class TicketDetailDto : TicketListDto
     public string CreatedById { get; set; } = string.Empty;
     public int? CompanyId { get; set; }
     public string? Company { get; set; }
+    public int? ProductId { get; set; }
+    public string? Product { get; set; }
     public int? DepartmentId { get; set; }
     public string? Department { get; set; }
     public int? TeamId { get; set; }
@@ -511,6 +517,7 @@ public record CreateTicketRequest(
     int? CategoryId,
     int? StatusId,
     int? CompanyId,
+    int? ProductId,
     int? DepartmentId);
 
 public record UpdateTicketRequest(

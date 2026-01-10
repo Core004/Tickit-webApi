@@ -60,7 +60,7 @@ public class CompaniesController : ControllerBase
     public async Task<ActionResult<CompanyDetailDto>> GetCompany(int id)
     {
         var company = await _context.Companies
-            .Include(c => c.Departments)
+            .Include(c => c.DepartmentCompanies)
             .Include(c => c.Users)
             .FirstOrDefaultAsync(c => c.Id == id);
 
@@ -85,7 +85,7 @@ public class CompaniesController : ControllerBase
             IsActive = company.IsActive,
             CreatedAt = company.CreatedAt,
             UpdatedAt = company.UpdatedAt,
-            DepartmentCount = company.Departments.Count,
+            DepartmentCount = company.DepartmentCompanies.Count,
             UserCount = company.Users.Count
         });
     }
@@ -114,6 +114,21 @@ public class CompaniesController : ControllerBase
         _context.Companies.Add(company);
         await _context.SaveChangesAsync();
 
+        // Create product subscriptions if ProductIds provided
+        if (request.ProductIds?.Count > 0)
+        {
+            var companyProducts = request.ProductIds.Select(productId => new CompanyProduct
+            {
+                CompanyId = company.Id,
+                ProductId = productId,
+                StartDate = DateTime.UtcNow,
+                IsActive = true
+            }).ToList();
+
+            _context.CompanyProducts.AddRange(companyProducts);
+            await _context.SaveChangesAsync();
+        }
+
         _logger.LogInformation("Company {Name} created with ID {Id}", company.Name, company.Id);
 
         return CreatedAtAction(nameof(GetCompany), new { id = company.Id }, company.Id);
@@ -140,6 +155,38 @@ public class CompaniesController : ControllerBase
         company.Description = request.Description;
         company.IsActive = request.IsActive;
         company.UpdatedAt = DateTime.UtcNow;
+
+        // Sync product subscriptions if ProductIds provided
+        if (request.ProductIds is not null)
+        {
+            var existingProducts = await _context.CompanyProducts
+                .Where(cp => cp.CompanyId == id)
+                .ToListAsync();
+
+            var existingProductIds = existingProducts.Select(cp => cp.ProductId).ToHashSet();
+            var newProductIds = request.ProductIds.ToHashSet();
+
+            // Remove products that are no longer selected
+            var toRemove = existingProducts.Where(cp => !newProductIds.Contains(cp.ProductId)).ToList();
+            if (toRemove.Count > 0)
+            {
+                _context.CompanyProducts.RemoveRange(toRemove);
+            }
+
+            // Add newly selected products
+            var toAdd = newProductIds.Except(existingProductIds).Select(productId => new CompanyProduct
+            {
+                CompanyId = id,
+                ProductId = productId,
+                StartDate = DateTime.UtcNow,
+                IsActive = true
+            }).ToList();
+
+            if (toAdd.Count > 0)
+            {
+                _context.CompanyProducts.AddRange(toAdd);
+            }
+        }
 
         await _context.SaveChangesAsync();
 
@@ -188,6 +235,21 @@ public class CompaniesController : ControllerBase
 
         return NoContent();
     }
+
+    [HttpGet("{id}/products")]
+    public async Task<ActionResult<List<int>>> GetCompanyProducts(int id)
+    {
+        var companyExists = await _context.Companies.AnyAsync(c => c.Id == id);
+        if (!companyExists)
+            return NotFound();
+
+        var productIds = await _context.CompanyProducts
+            .Where(cp => cp.CompanyId == id && cp.IsActive)
+            .Select(cp => cp.ProductId)
+            .ToListAsync();
+
+        return Ok(productIds);
+    }
 }
 
 // DTOs
@@ -230,7 +292,8 @@ public record CreateCompanyRequest(
     string? Area,
     string? PinCode,
     string? Description,
-    bool IsActive = true);
+    bool IsActive = true,
+    List<int>? ProductIds = null);
 
 public record UpdateCompanyRequest(
     string Name,
@@ -245,4 +308,5 @@ public record UpdateCompanyRequest(
     string? Area,
     string? PinCode,
     string? Description,
-    bool IsActive = true);
+    bool IsActive = true,
+    List<int>? ProductIds = null);
